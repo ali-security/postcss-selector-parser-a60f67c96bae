@@ -1,10 +1,11 @@
 name: test
 on:
-  push:
-    branches:
-    - 'main'
-    - 'master'
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Optional ava file/glob filter; empty runs the full suite'
+        required: false
+        default: ''
 
 defaults:
   run:
@@ -13,6 +14,7 @@ defaults:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -30,4 +32,39 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: test
-        run: npm test
+        env:
+          NODE_OPTIONS: ${{ matrix.node == 20 && '--no-experimental-detect-module' || '' }}
+          TEST_FILTER: ${{ inputs.test-filter }}
+        run: |
+          if [ -n "$TEST_FILTER" ]; then
+            npx ava $TEST_FILTER
+          else
+            npm test
+          fi
+
+  pack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18.19.0
+
+      - name: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: npm pack
+        run: |
+          npm i -g npm@10.2.3
+          mkdir -p pack-output
+          npm pack --pack-destination pack-output
+          ls -la pack-output
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: postcss-selector-parser-tgz
+          path: pack-output/postcss-selector-parser-6.1.0.tgz
+          if-no-files-found: error
