@@ -107,9 +107,9 @@ function indexesOf (array, item) {
 }
 
 function uniqs () {
-    const list = Array.prototype.concat.apply([], arguments);
-
-    return list.filter((item, i) => i === list.indexOf(item));
+    // A Set keeps the first-occurrence order the previous filter/indexOf pass
+    // produced, without its quadratic cost on long index lists.
+    return Array.from(new Set(Array.prototype.concat.apply([], arguments)));
 }
 
 export default class Parser {
@@ -853,19 +853,26 @@ export default class Parser {
             }
             nextToken = this.nextToken;
         }
+        // Allow decimal numbers percent in @keyframes
+        // (depends on the whole word only, so test it once rather than per dot)
+        const isKeyframesPercent = /^\d+\.\d+%$/.test(word);
         const hasClass = indexesOf(word, '.').filter(i => {
             // Allow escaped dot within class name
             const escapedDot = word[i - 1] === '\\';
-            // Allow decimal numbers percent in @keyframes
-            const isKeyframesPercent = /^\d+\.\d+%$/.test(word);
             return !escapedDot && !isKeyframesPercent;
         });
         let hasId = indexesOf(word, '#').filter(i => word[i - 1] !== '\\');
         // Eliminate Sass interpolations from the list of id indexes
         const interpolations = indexesOf(word, '#{');
         if (interpolations.length) {
-            hasId = hasId.filter(hashIndex => !~interpolations.indexOf(hashIndex));
+            const interpolationIndexes = new Set(interpolations);
+            hasId = hasId.filter(hashIndex => !interpolationIndexes.has(hashIndex));
         }
+        // Membership tests are built once. Scanning the arrays per index would make
+        // a flat selector such as `.a.a.a...` quadratic in its number of class/id
+        // indexes, which is enough to pin a CPU core on attacker-supplied input.
+        const classIndexes = new Set(hasClass);
+        const idIndexes = new Set(hasId);
         let indices = sortAsc(uniqs([0, ...hasClass, ...hasId]));
         indices.forEach((ind, i) => {
             const index = indices[i + 1] || word.length;
@@ -882,14 +889,14 @@ export default class Parser {
                 current[3],
                 current[2] + (index - 1)
             );
-            if (~hasClass.indexOf(ind)) {
+            if (classIndexes.has(ind)) {
                 let classNameOpts = {
                     value: value.slice(1),
                     source,
                     sourceIndex,
                 };
                 node = new ClassName(unescapeProp(classNameOpts, "value"));
-            } else if (~hasId.indexOf(ind)) {
+            } else if (idIndexes.has(ind)) {
                 let idOpts = {
                     value: value.slice(1),
                     source,
