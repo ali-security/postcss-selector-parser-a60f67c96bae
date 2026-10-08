@@ -1,3 +1,4 @@
+import {resolveMaxNestingDepth, MAX_NESTING_DEPTH} from '../util';
 import Node from './node';
 import * as types from './types';
 
@@ -188,12 +189,19 @@ export default class Container extends Node {
         }
     }
 
-    walk (callback) {
+    walk (callback, depth = 0) {
+        // Bound recursion so a pathologically deep node tree raises a catchable
+        // error instead of overflowing the call stack (CVE-2026-9358 / CWE-674).
+        if (depth > MAX_NESTING_DEPTH) {
+            throw new Error(
+                `Cannot walk selector: nesting depth exceeds the maximum of ${MAX_NESTING_DEPTH}.`
+            );
+        }
         return this.each((node, i) => {
             let result = callback(node, i);
 
             if (result !== false && node.length) {
-                result = node.walk(callback);
+                result = node.walk(callback, depth + 1);
             }
 
             if (result === false) {
@@ -313,7 +321,22 @@ export default class Container extends Node {
         return this.nodes.sort(callback);
     }
 
-    toString () {
-        return this.map(String).join('');
+    toString (options = {}) {
+        return this._stringify(options, 0, resolveMaxNestingDepth(options.maxNestingDepth));
+    }
+
+    _stringify (options, depth, max) {
+        return this.map(child => this._stringifyChild(child, options, depth, max)).join('');
+    }
+
+    // Serialize a child node. Historically `toString` used `this.map(String)`,
+    // which leniently coerced anything — including raw arrays inserted via
+    // `replaceWith(array)` / `insertBefore` / `insertAfter` (e.g. Tailwind's
+    // `:merge()` expansion). Fall back to `String(child)` for values that are
+    // not parser nodes so that behaviour is preserved.
+    _stringifyChild (child, options, depth, max) {
+        return typeof child._stringify === 'function'
+            ? child._stringify(options, depth, max)
+            : String(child);
     }
 }
